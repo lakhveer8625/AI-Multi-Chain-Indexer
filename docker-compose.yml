@@ -45,11 +45,9 @@ services:
       - mysql
 
   # --- DATABASE MIGRATIONS ---
+  # --- DATABASE MIGRATIONS ---
   db-deploy:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: database-utils
+    image: lakhveer13/ai-test-db-deploy:latest
     command: sh -c "prisma migrate deploy"
     environment:
       DATABASE_URL: mysql://indexer_user:indexer_password@mysql:3306/indexer_db
@@ -58,10 +56,7 @@ services:
         condition: service_healthy
 
   db-seed:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: database-utils
+    image: lakhveer13/ai-test-db-seed:latest
     command: node dist/prisma/seed.js
     environment:
       DATABASE_URL: mysql://indexer_user:indexer_password@mysql:3306/indexer_db
@@ -73,10 +68,7 @@ services:
 
   # --- APPLICATION SERVICES ---
   ingestion-service:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: ingestion-service
+    image: lakhveer13/ai-test-ingestion-service:latest
     container_name: mci-ingestion
     command: node dist/index.js
     environment:
@@ -92,10 +84,7 @@ services:
         condition: service_healthy
 
   indexer-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: indexer-worker
+    image: lakhveer13/ai-test-indexer-worker:latest
     container_name: mci-indexer
     command: node dist/index.js
     environment:
@@ -109,10 +98,7 @@ services:
         condition: service_healthy
 
   reorg-service:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: reorg-service
+    image: lakhveer13/ai-test-reorg-service:latest
     container_name: mci-reorg
     command: node dist/index.js
     environment:
@@ -127,10 +113,7 @@ services:
         condition: service_healthy
 
   query-api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: query-api
+    image: lakhveer13/ai-test-query-api:latest
     container_name: mci-query-api
     command: node dist/index.js
     ports:
@@ -147,12 +130,7 @@ services:
         condition: service_healthy
 
   frontend:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: frontend
-      args:
-        NEXT_PUBLIC_GRAPHQL_URL: ${NEXT_PUBLIC_GRAPHQL_URL:-http://localhost:4000/graphql}
+    image: lakhveer13/ai-test-frontend:latest
     container_name: mci-frontend
     # No command needed, entrypoint is node server.js
     ports:

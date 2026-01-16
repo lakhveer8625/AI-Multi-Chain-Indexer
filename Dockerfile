@@ -29,7 +29,7 @@ COPY . .
 # Generate Prisma and build everything
 RUN cd packages/database && npx prisma generate
 RUN cd packages/database && pnpm build
-RUN pnpm build
+RUN pnpm -r --workspace-concurrency=1 run build
 
 # --- TARGETS ---
 # Reverting to copying the full application state from builder to ensure
@@ -50,6 +50,7 @@ WORKDIR /app/packages/indexer-worker
 CMD ["node", "dist/index.js"]
 
 FROM base AS reorg-service
+COPY --from=builder /app /app
 WORKDIR /app/packages/reorg-service
 # RUN rm -rf src
 CMD ["node", "dist/index.js"]
@@ -73,4 +74,4 @@ COPY --from=builder /app/packages/frontend/public ./public
 COPY --from=builder /app/packages/frontend/.next/standalone ./
 COPY --from=builder /app/packages/frontend/.next/static ./.next/static
 EXPOSE 3000
-ENTRYPOINT ["node", "server.js"]
+CMD ["node", "server.js"]
