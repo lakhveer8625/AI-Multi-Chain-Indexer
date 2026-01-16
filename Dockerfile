@@ -5,6 +5,7 @@ ENV PATH="$PNPM_HOME:$PATH"
 ENV CI=true
 RUN corepack enable
 RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+# Install Prisma globally for deployment commands
 RUN npm install -g prisma@5.8.1
 WORKDIR /app
 
@@ -21,7 +22,7 @@ COPY packages/query-api/package.json ./packages/query-api/
 COPY packages/reorg-service/package.json ./packages/reorg-service/
 COPY packages/shared/package.json ./packages/shared/
 
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --no-frozen-lockfile --config.node-linker=hoisted
 
 COPY . .
 
@@ -29,46 +30,45 @@ COPY . .
 RUN cd packages/database && npx prisma generate
 RUN pnpm build
 
-# Prune dev dependencies to save space
-# RUN pnpm prune --prod
-
 # --- TARGETS ---
-# We use the builder as base for runner to keep symlinks intact
-# but we only copy the necessary bits.
+# Reverting to copying the full application state from builder to ensure
+# all symlinks and pnpm workspace structures are preserved.
+# This results in larger images (~2.3GB) but guarantees stability.
 
 FROM base AS ingestion-service
 COPY --from=builder /app /app
 WORKDIR /app/packages/ingestion-service
-# Remove source files to save space
-RUN rm -rf src
+# Remove source files to save space (minor optimization)
+# RUN rm -rf src
 CMD ["node", "dist/index.js"]
 
 FROM base AS indexer-worker
 COPY --from=builder /app /app
 WORKDIR /app/packages/indexer-worker
-RUN rm -rf src
+# RUN rm -rf src
 CMD ["node", "dist/index.js"]
 
 FROM base AS reorg-service
 COPY --from=builder /app /app
 WORKDIR /app/packages/reorg-service
-RUN rm -rf src
+# RUN rm -rf src
 CMD ["node", "dist/index.js"]
 
 FROM base AS query-api
 COPY --from=builder /app /app
 WORKDIR /app/packages/query-api
-RUN rm -rf src
+# RUN rm -rf src
 CMD ["node", "dist/index.js"]
 
 FROM base AS database-utils
 COPY --from=builder /app /app
 WORKDIR /app/packages/database
-RUN rm -rf src
+# RUN rm -rf src
 # CMD is overridden in compose
 
 FROM base AS frontend
 ENV NODE_ENV=production
+# Frontend uses standalone mode which is highly optimized
 COPY --from=builder /app/packages/frontend/public ./public
 COPY --from=builder /app/packages/frontend/.next/standalone ./
 COPY --from=builder /app/packages/frontend/.next/static ./.next/static

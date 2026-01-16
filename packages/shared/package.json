@@ -8,6 +8,7 @@
         "dev": "tsc -w"
     },
     "dependencies": {
+        "@mci/database": "workspace:*",
         "dotenv": "^16.4.1",
         "ethers": "^6.16.0",
         "zod": "^3.22.4"
