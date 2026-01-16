@@ -2,8 +2,13 @@ import { PrismaClient } from '@prisma/client';
 import dotenv from 'dotenv';
 import path from 'path';
 
-// Load environment variables from root .env
-dotenv.config({ path: path.join(__dirname, '../../../.env') });
+// Load environment variables from root .env if it exists
+try {
+    const envPath = path.join(__dirname, '../../../.env');
+    dotenv.config({ path: envPath });
+} catch (e) {
+    // Ignore error if .env doesn't exist (expected in Docker)
+}
 
 const prisma = new PrismaClient();
 
