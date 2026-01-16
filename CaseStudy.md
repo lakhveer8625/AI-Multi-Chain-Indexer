@@ -11,7 +11,7 @@ The system follows a microservices architecture to ensure scalability and reliab
 3.  **Reorg Service**: Monitors the state of indexed blocks and detects chain reorganizations, automatically rolling back non-canonical data to maintain integrity.
 4.  **Query API**: A robust GraphQL server that serves the indexed data to the frontend and external consumers.
 5.  **Frontend**: A modern, premium Next.js dashboard with real-time updates and advanced filtering.
-
+ 
 ## Tech Stack
 -   **Language**: TypeScript (Monorepo with pnpm)
 -   **Database**: MySQL with Prisma ORM
