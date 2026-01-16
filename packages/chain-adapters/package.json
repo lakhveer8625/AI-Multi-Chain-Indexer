@@ -1,0 +1,21 @@
+{
+    "name": "@mci/chain-adapters",
+    "version": "1.0.0",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "scripts": {
+        "build": "tsc",
+        "dev": "tsc -w"
+    },
+    "dependencies": {
+        "@mci/shared": "workspace:*",
+        "ethers": "^6.10.0",
+        "@solana/web3.js": "^1.90.0",
+        "axios": "^1.6.7",
+        "ws": "^8.16.0"
+    },
+    "devDependencies": {
+        "typescript": "^5.3.3",
+        "@types/ws": "^8.5.10"
+    }
+}

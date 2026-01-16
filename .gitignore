@@ -1,0 +1,9 @@
+node_modules
+dist
+.env
+.DS_Store
+coverage
+.turbo
+*.log
+mysql_data
+redis_data
