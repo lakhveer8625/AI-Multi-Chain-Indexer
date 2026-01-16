@@ -73,4 +73,4 @@ COPY --from=builder /app/packages/frontend/public ./public
 COPY --from=builder /app/packages/frontend/.next/standalone ./
 COPY --from=builder /app/packages/frontend/.next/static ./.next/static
 EXPOSE 3000
-ENTRYPOINT ["node", "server.js"]
+CMD ["pnpm", "run", "start"]
