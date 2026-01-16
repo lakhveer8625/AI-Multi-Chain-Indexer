@@ -28,6 +28,7 @@ COPY . .
 
 # Generate Prisma and build everything
 RUN cd packages/database && npx prisma generate
+RUN cd packages/database && pnpm build
 RUN pnpm build
 
 # --- TARGETS ---
@@ -49,7 +50,6 @@ WORKDIR /app/packages/indexer-worker
 CMD ["node", "dist/index.js"]
 
 FROM base AS reorg-service
-COPY --from=builder /app /app
 WORKDIR /app/packages/reorg-service
 # RUN rm -rf src
 CMD ["node", "dist/index.js"]
