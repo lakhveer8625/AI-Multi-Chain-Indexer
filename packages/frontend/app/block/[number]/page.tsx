@@ -9,7 +9,7 @@ export default function BlockPage() {
 
     return (
         <div className="min-h-screen bg-zinc-50">
-            <div className="mx-auto max-w-7xl px-4 py-8">
+            <div className=" px-4 py-8">
                 <div className="mb-6 flex items-center gap-3 text-sm text-zinc-500">
                     <Link href="/" className="text-blue-600 hover:underline">
                         ← Back to Explorer
@@ -131,7 +131,7 @@ function BlockEventList({ blockNumber }: { blockNumber: string }) {
                                     ) : "-"}
                                 </td>
                                 <td className="px-5 py-3 text-right font-medium text-zinc-700">
-                                    {event.amount ? (event.amount.length > 10 ? '...' : event.amount) : "-"}
+                                    {event.amount ? (event.amount.length > 10 ? '...' : (Number(event.amount) / 1000000000000000000).toString()) : "-"}
                                 </td>
                             </tr>
                         ))}

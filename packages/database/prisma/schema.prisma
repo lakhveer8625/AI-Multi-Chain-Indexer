@@ -91,7 +91,7 @@ model IndexedEvent {
   gasPrice             String?  @map("gas_price")
   gasUsed              String?  @map("gas_used")
   gasLimit             String?  @map("gas_limit")
-  input                String?  @db.Text
+  input                String?  @db.LongText
   maxFeePerGas         String?  @map("max_fee_per_gas")
   maxPriorityFeePerGas String?  @map("max_priority_fee_per_gas")
   nonce                Int?
@@ -132,4 +132,26 @@ model ApiKey {
   @@index([key])
   @@index([userId], map: "api_keys_user_id_fkey")
   @@map("api_keys")
+}
+
+model ErrorLog {
+  id              BigInt   @id @default(autoincrement())
+  chainId         Int?     @map("chain_id")
+  errorType       String   @map("error_type") // 'RPC_ERROR', 'WEBSOCKET_ERROR', 'DATABASE_ERROR', 'PROCESSING_ERROR', etc.
+  errorSource     String   @map("error_source") // Service name: 'ingestion-service', 'indexer-worker', 'query-api', etc.
+  errorMessage    String   @map("error_message") @db.Text
+  stackTrace      String?  @map("stack_trace") @db.Text
+  context         Json?    // Additional context like block number, transaction hash, RPC endpoint, etc.
+  severity        String   @default("ERROR") // 'INFO', 'WARNING', 'ERROR', 'CRITICAL'
+  isResolved      Boolean  @default(false) @map("is_resolved")
+  retryCount      Int      @default(0) @map("retry_count")
+  createdAt       DateTime @default(now()) @map("created_at")
+  resolvedAt      DateTime? @map("resolved_at")
+
+  @@index([errorType])
+  @@index([errorSource])
+  @@index([chainId])
+  @@index([createdAt])
+  @@index([severity])
+  @@map("error_logs")
 }

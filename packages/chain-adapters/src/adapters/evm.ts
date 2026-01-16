@@ -1,16 +1,20 @@
 import { ethers } from 'ethers';
 import { ChainAdapter, DecodedEvent } from '../interfaces';
 import { Block } from '@mci/shared';
+import { createErrorLogger, ErrorLogger } from '@mci/shared';
 
 export class EVMAdapter implements ChainAdapter {
     private provider: ethers.JsonRpcProvider | ethers.WebSocketProvider;
     private isConnected = false;
+    private errorLogger: ErrorLogger;
 
     constructor(
         public chainId: number,
         private rpcUrl: string,
         private wsUrl?: string
     ) {
+        this.errorLogger = createErrorLogger(`EVMAdapter-Chain-${chainId}`);
+
         if (this.wsUrl) {
             this.provider = new ethers.WebSocketProvider(this.wsUrl);
         } else {
@@ -23,68 +27,126 @@ export class EVMAdapter implements ChainAdapter {
 
     async connect(): Promise<void> {
         try {
-            await this.provider.getNetwork();
+            await this.errorLogger.executeWithRetry(
+                async () => await this.provider.getNetwork(),
+                'RPC_ERROR',
+                { chainId: this.chainId, rpcEndpoint: this.rpcUrl, operationType: 'connect' }
+            );
             this.isConnected = true;
-            console.log(`Connected to chain ${this.chainId}`);
+            console.log(`✓ Connected to chain ${this.chainId}`);
         } catch (error) {
-            console.error(`Failed to connect to chain ${this.chainId}:`, error);
+            await this.errorLogger.logError(
+                error,
+                'RPC_ERROR',
+                { chainId: this.chainId, rpcEndpoint: this.rpcUrl, operationType: 'connect' },
+                'CRITICAL'
+            );
             throw error;
         }
     }
 
     async disconnect(): Promise<void> {
-        this.provider.destroy();
-        this.isConnected = false;
+        try {
+            this.provider.destroy();
+            this.isConnected = false;
+            console.log(`✓ Disconnected from chain ${this.chainId}`);
+        } catch (error) {
+            await this.errorLogger.logError(
+                error,
+                'RPC_ERROR',
+                { chainId: this.chainId, operationType: 'disconnect' },
+                'WARNING'
+            );
+        }
     }
 
     async getCurrentBlock(): Promise<number> {
-        return await this.provider.getBlockNumber();
+        return await this.errorLogger.executeWithRetry(
+            async () => await this.provider.getBlockNumber(),
+            'RPC_ERROR',
+            { chainId: this.chainId, operationType: 'getCurrentBlock' }
+        );
     }
 
     async getBlock(blockNumber: number, includeTransactions = false): Promise<Block> {
-        const block = await this.provider.getBlock(blockNumber, includeTransactions);
-        if (!block) throw new Error(`Block ${blockNumber} not found`);
+        try {
+            const block = await this.errorLogger.executeWithRetry(
+                async () => await this.provider.getBlock(blockNumber, includeTransactions),
+                'RPC_ERROR',
+                { chainId: this.chainId, blockNumber, operationType: 'getBlock' }
+            );
 
-        const result: Block = {
-            number: block.number,
-            hash: block.hash!,
-            parentHash: block.parentHash,
-            timestamp: block.timestamp,
-        };
-
-        if (includeTransactions && block && block.transactions) {
-            console.log(`[EVMAdapter] Block ${blockNumber} has ${block.transactions.length} transactions`);
-            // Include transactions as decoded events
-            const txHashesOrTxs = block.transactions;
-            const transactions: (DecodedEvent | null)[] = [];
-
-            // Process in small serial chunks to avoid rate limits
-            const chunkSize = 10;
-            for (let i = 0; i < txHashesOrTxs.length; i += chunkSize) {
-                const chunk = txHashesOrTxs.slice(i, i + chunkSize);
-                const results = await Promise.all(chunk.map(async (txHashOrTx: string | ethers.TransactionResponse) => {
-                    try {
-                        const tx = typeof txHashOrTx === 'string'
-                            ? await this.provider.getTransaction(txHashOrTx)
-                            : txHashOrTx;
-
-                        if (!tx) return null;
-                        const receipt = await this.provider.getTransactionReceipt(tx.hash);
-                        return this.parseTransaction(tx, receipt, block as any);
-                    } catch (e) {
-                        console.error(`Error fetching tx in getBlock for ${blockNumber}:`, e);
-                        return null;
-                    }
-                }));
-                transactions.push(...results);
-                if (txHashesOrTxs.length > chunkSize) {
-                    await new Promise(resolve => setTimeout(resolve, 200)); // Small pause between chunks
-                }
+            if (!block) {
+                throw new Error(`Block ${blockNumber} not found`);
             }
-            result.transactions = transactions.filter((t): t is DecodedEvent => t !== null);
-        }
 
-        return result;
+            const result: Block = {
+                number: block.number,
+                hash: block.hash!,
+                parentHash: block.parentHash,
+                timestamp: block.timestamp,
+            };
+
+            if (includeTransactions && block && block.transactions) {
+                console.log(`[EVMAdapter] Block ${blockNumber} has ${block.transactions.length} transactions`);
+                const txHashesOrTxs = block.transactions;
+                const transactions: (DecodedEvent | null)[] = [];
+
+                // Process in optimized chunks with retry logic
+                const chunkSize = 10;
+                for (let i = 0; i < txHashesOrTxs.length; i += chunkSize) {
+                    const chunk = txHashesOrTxs.slice(i, i + chunkSize);
+                    const results = await Promise.all(chunk.map(async (txHashOrTx: string | ethers.TransactionResponse) => {
+                        try {
+                            const tx = typeof txHashOrTx === 'string'
+                                ? await this.errorLogger.executeWithRetry(
+                                    async () => await this.provider.getTransaction(txHashOrTx),
+                                    'RPC_ERROR',
+                                    { chainId: this.chainId, blockNumber, txHash: txHashOrTx, operationType: 'getTransaction' },
+                                    2 // Less retries for individual txs
+                                )
+                                : txHashOrTx;
+
+                            if (!tx) return null;
+
+                            const receipt = await this.errorLogger.executeWithRetry(
+                                async () => await this.provider.getTransactionReceipt(tx.hash),
+                                'RPC_ERROR',
+                                { chainId: this.chainId, blockNumber, txHash: tx.hash, operationType: 'getTransactionReceipt' },
+                                2
+                            );
+
+                            return this.parseTransaction(tx, receipt, block as any);
+                        } catch (e) {
+                            await this.errorLogger.logError(
+                                e,
+                                'RPC_ERROR',
+                                { chainId: this.chainId, blockNumber, operationType: 'parseTransaction' },
+                                'WARNING'
+                            );
+                            return null;
+                        }
+                    }));
+                    transactions.push(...results);
+
+                    // Rate limiting
+                    if (i + chunkSize < txHashesOrTxs.length) {
+                        await new Promise(resolve => setTimeout(resolve, 200));
+                    }
+                }
+                result.transactions = transactions.filter((t): t is DecodedEvent => t !== null);
+            }
+
+            return result;
+        } catch (error) {
+            await this.errorLogger.logError(
+                error,
+                'RPC_ERROR',
+                { chainId: this.chainId, blockNumber, operationType: 'getBlock' },
+                'ERROR'
+            );
+            throw error;
+        }
     }
 
     private parseTransaction(tx: ethers.TransactionResponse, receipt: ethers.TransactionReceipt | null, block: ethers.Block): DecodedEvent {
@@ -116,53 +178,74 @@ export class EVMAdapter implements ChainAdapter {
     }
 
     async getLogs(fromBlock: number, toBlock: number, addresses?: string[]): Promise<DecodedEvent[]> {
-        const logs = await this.provider.getLogs({
-            fromBlock,
-            toBlock,
-            address: addresses,
-        });
+        try {
+            const logs = await this.errorLogger.executeWithRetry(
+                async () => await this.provider.getLogs({
+                    fromBlock,
+                    toBlock,
+                    address: addresses,
+                }),
+                'RPC_ERROR',
+                { chainId: this.chainId, blockNumber: fromBlock, operationType: 'getLogs' }
+            );
 
-        // Optimization: Fetch unique transactions in this batch
-        const txHashes = Array.from(new Set(logs.map(l => l.transactionHash)));
-        const txMap = new Map<string, { tx: ethers.TransactionResponse | null, receipt: ethers.TransactionReceipt | null }>();
-
-        // Fetch in chunks to avoid RPC rate limits
-        const chunkSize = 10;
-        for (let i = 0; i < txHashes.length; i += chunkSize) {
-            const chunk = txHashes.slice(i, i + chunkSize);
-            await Promise.all(chunk.map(async (hash) => {
-                let attempts = 0;
-                const maxAttempts = 3;
-                const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
-
-                while (attempts < maxAttempts) {
-                    try {
-                        const [tx, receipt] = await Promise.all([
-                            this.provider.getTransaction(hash),
-                            this.provider.getTransactionReceipt(hash)
-                        ]);
-                        if (tx && receipt) {
-                            txMap.set(hash, { tx, receipt });
-                            return;
-                        }
-                        throw new Error("Missing tx or receipt");
-                    } catch (e) {
-                        attempts++;
-                        if (attempts === maxAttempts) {
-                            console.error(`Failed to fetch tx/receipt ${hash} after ${maxAttempts} attempts:`, (e as any).message);
-                            txMap.set(hash, { tx: null, receipt: null });
-                        } else {
-                            await delay(500 * attempts);
-                        }
-                    }
-                }
-            }));
-            if (txHashes.length > chunkSize) {
-                await new Promise(resolve => setTimeout(resolve, 200));
+            if (!logs || logs.length === 0) {
+                return [];
             }
-        }
 
-        return logs.map(log => this.parseLogWithTx(log, txMap.get(log.transactionHash) || { tx: null, receipt: null }));
+            // Optimization: Fetch unique transactions in this batch
+            const txHashes = Array.from(new Set(logs.map(l => l.transactionHash)));
+            const txMap = new Map<string, { tx: ethers.TransactionResponse | null, receipt: ethers.TransactionReceipt | null }>();
+
+            // Fetch in chunks to avoid RPC rate limits
+            const chunkSize = 10;
+            for (let i = 0; i < txHashes.length; i += chunkSize) {
+                const chunk = txHashes.slice(i, i + chunkSize);
+                await Promise.all(chunk.map(async (hash) => {
+                    try {
+                        const [tx, receipt] = await this.errorLogger.executeWithRetry(
+                            async () => {
+                                const [t, r] = await Promise.all([
+                                    this.provider.getTransaction(hash),
+                                    this.provider.getTransactionReceipt(hash)
+                                ]);
+                                if (!t || !r) {
+                                    throw new Error("Missing tx or receipt");
+                                }
+                                return [t, r] as [ethers.TransactionResponse, ethers.TransactionReceipt];
+                            },
+                            'RPC_ERROR',
+                            { chainId: this.chainId, txHash: hash, operationType: 'getTransactionData' },
+                            3
+                        );
+                        txMap.set(hash, { tx, receipt });
+                    } catch (e) {
+                        await this.errorLogger.logError(
+                            e,
+                            'RPC_ERROR',
+                            { chainId: this.chainId, txHash: hash, operationType: 'getTransactionData' },
+                            'WARNING'
+                        );
+                        txMap.set(hash, { tx: null, receipt: null });
+                    }
+                }));
+
+                // Rate limiting between chunks
+                if (i + chunkSize < txHashes.length) {
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                }
+            }
+
+            return logs.map(log => this.parseLogWithTx(log, txMap.get(log.transactionHash) || { tx: null, receipt: null }));
+        } catch (error) {
+            await this.errorLogger.logError(
+                error,
+                'RPC_ERROR',
+                { chainId: this.chainId, blockNumber: fromBlock, operationType: 'getLogs' },
+                'ERROR'
+            );
+            return [];
+        }
     }
 
     private parseLogWithTx(log: ethers.Log, data: { tx: ethers.TransactionResponse | null, receipt: ethers.TransactionReceipt | null }): DecodedEvent {
@@ -188,30 +271,72 @@ export class EVMAdapter implements ChainAdapter {
     }
 
     subscribeToBlocks(callback: (blockNumber: number) => void): void {
-        this.provider.on('block', callback);
+        try {
+            this.provider.on('block', async (blockNumber: number) => {
+                try {
+                    callback(blockNumber);
+                } catch (error) {
+                    await this.errorLogger.logError(
+                        error,
+                        'PROCESSING_ERROR',
+                        { chainId: this.chainId, blockNumber, operationType: 'blockCallback' },
+                        'WARNING'
+                    );
+                }
+            });
+        } catch (error) {
+            this.errorLogger.logError(
+                error,
+                'WEBSOCKET_ERROR',
+                { chainId: this.chainId, operationType: 'subscribeToBlocks' },
+                'CRITICAL'
+            );
+        }
     }
 
     subscribeToLogs(callback: (event: DecodedEvent) => void, addresses?: string[]): void {
-        const filter = addresses ? { address: addresses } : {};
-        this.provider.on(filter, async (log) => {
-            try {
-                // To get gas data and addresses, we need tx/receipt
-                const [tx, receipt] = await Promise.all([
-                    this.provider.getTransaction(log.transactionHash),
-                    this.provider.getTransactionReceipt(log.transactionHash)
-                ]);
-
-                const decoded = this.parseLogWithTx(log, { tx, receipt });
-                callback(decoded);
-            } catch (err) {
-                console.error('Error in log subscription:', err);
-                // Fallback to basic parsing if tx fetch fails
+        try {
+            const filter = addresses ? { address: addresses } : {};
+            this.provider.on(filter, async (log) => {
                 try {
-                    const decoded = this.parseLog(log);
+                    // To get gas data and addresses, we need tx/receipt
+                    const [tx, receipt] = await Promise.all([
+                        this.provider.getTransaction(log.transactionHash),
+                        this.provider.getTransactionReceipt(log.transactionHash)
+                    ]);
+
+                    const decoded = this.parseLogWithTx(log, { tx, receipt });
                     callback(decoded);
-                } catch (e) { }
-            }
-        });
+                } catch (err) {
+                    await this.errorLogger.logError(
+                        err,
+                        'RPC_ERROR',
+                        { chainId: this.chainId, txHash: log.transactionHash, operationType: 'logSubscriptionData' },
+                        'WARNING'
+                    );
+
+                    // Fallback to basic parsing if tx fetch fails
+                    try {
+                        const decoded = this.parseLog(log);
+                        callback(decoded);
+                    } catch (e) {
+                        await this.errorLogger.logError(
+                            e,
+                            'PROCESSING_ERROR',
+                            { chainId: this.chainId, txHash: log.transactionHash, operationType: 'parseLog' },
+                            'ERROR'
+                        );
+                    }
+                }
+            });
+        } catch (error) {
+            this.errorLogger.logError(
+                error,
+                'WEBSOCKET_ERROR',
+                { chainId: this.chainId, operationType: 'subscribeToLogs' },
+                'CRITICAL'
+            );
+        }
     }
 
     private parseLog(log: ethers.Log | ethers.LogDescription): DecodedEvent {

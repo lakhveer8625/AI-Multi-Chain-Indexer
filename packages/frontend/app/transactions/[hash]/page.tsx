@@ -109,6 +109,7 @@ const formatAmount = (value?: string) => {
         const dec = value.slice(len - 18, len - 12);
         return `${whole}.${dec} ETH`;
     }
+    value = '' + (Number(value)) / 1000000000000000000
     return `${value} ETH`;
 };
 
@@ -195,7 +196,7 @@ export default function TransactionPage() {
 
     return (
         <div className="min-h-screen bg-zinc-50 pb-20">
-            <div className="mx-auto max-w-7xl px-4 py-8">
+            <div className="px-4 py-8">
 
                 {/* Header */}
                 <div className="mb-6 border-b border-zinc-200 pb-4">
@@ -339,7 +340,7 @@ export default function TransactionPage() {
                                                 </Link>
                                                 <span className="font-bold text-zinc-600">For</span>
                                                 <span className="font-mono text-zinc-800">
-                                                    {t.amount || "?"}
+                                                    {(Number(t.amount) / 1000000000000000000).toString() || "?"}
                                                 </span>
                                                 <span className="flex items-center gap-1 text-xs text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
                                                     <span className="truncate max-w-[80px]" title={t.contractAddress}>

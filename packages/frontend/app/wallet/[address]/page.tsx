@@ -53,7 +53,7 @@ export default function WalletPage() {
 
     return (
         <div className="min-h-screen bg-zinc-50">
-            <div className="mx-auto max-w-5xl px-6 py-10">
+            <div className="px-6 py-10">
                 <div className="mb-6 flex items-center gap-3 text-sm text-zinc-500">
                     <Link href="/" className="text-blue-600 hover:underline">
                         ← Back to Explorer
@@ -106,7 +106,7 @@ export default function WalletPage() {
                                                         {isFrom ? e.to?.slice(0, 10) + '...' : e.from?.slice(0, 10) + '...'}
                                                     </span>
                                                 </td>
-                                                <td className="px-4 py-3 text-right text-zinc-900">{e.amount || '-'}</td>
+                                                <td className="px-4 py-3 text-right text-zinc-900">{(Number(e.amount) / 1000000000000000000).toString() || '-'}</td>
                                                 <td className="px-4 py-3 text-right text-zinc-500 text-xs">
                                                     {new Date(e.timestamp).toLocaleDateString()}
                                                 </td>

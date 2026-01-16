@@ -2,7 +2,7 @@
 
 import { gql } from "@apollo/client";
 import { useQuery } from "@apollo/client/react";
-import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 
 const GET_TRANSACTION_HISTORY = gql`
   query TransactionHistory($days: Int!, $chainId: Int) {
@@ -13,16 +13,21 @@ const GET_TRANSACTION_HISTORY = gql`
   }
 `;
 
+interface TransactionHistoryItem {
+    date: string;
+    count: number;
+}
+
 export default function TransactionChart({ chainId }: { chainId?: string }) {
     const chainIdInt = chainId && chainId !== "all" ? Number(chainId) : undefined;
 
-    const { data, loading, error } = useQuery(GET_TRANSACTION_HISTORY, {
+    const { data, loading, error } = useQuery<{ transactionHistory: TransactionHistoryItem[] }>(GET_TRANSACTION_HISTORY, {
         variables: { days: 14, chainId: chainIdInt },
         fetchPolicy: "cache-and-network"
     });
 
-    const history = (data as any)?.transactionHistory ?? [];
-    const totalTransactions = history.reduce((acc: number, item: any) => acc + item.count, 0);
+    const history = data?.transactionHistory ?? [];
+    const totalTransactions = history.reduce((acc, item) => acc + item.count, 0);
 
     if (loading) return <div className="h-[120px] w-full animate-pulse bg-zinc-100 rounded-lg"></div>;
     if (error) return <div className="text-xs text-red-500">Failed to load chart</div>;
@@ -57,7 +62,7 @@ export default function TransactionChart({ chainId }: { chainId?: string }) {
                             }}
                             labelStyle={{ color: '#71717a', marginBottom: '4px' }}
                             itemStyle={{ color: '#2563eb', fontWeight: 600 }}
-                            formatter={(value: any) => [Number(value).toLocaleString(), "Transactions"]}
+                            formatter={(value: number | undefined) => [value?.toLocaleString() || "0", "Transactions"]}
                             labelFormatter={(label) => new Date(label).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                         />
                         <Area

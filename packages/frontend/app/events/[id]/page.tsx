@@ -69,7 +69,7 @@ export default function EventDetailPage() {
 
   return (
     <div className="min-h-screen bg-zinc-50">
-      <div className="mx-auto max-w-5xl px-6 py-10">
+      <div className="px-6 py-10">
         <div className="mb-6 flex items-center gap-3 text-sm text-zinc-500">
           <Link href="/" className="text-blue-600 hover:underline">
             ← Back to Explorer
@@ -88,8 +88,8 @@ export default function EventDetailPage() {
             </div>
             <span
               className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${event.status === "Failed"
-                  ? "bg-rose-50 text-rose-700"
-                  : "bg-emerald-50 text-emerald-700"
+                ? "bg-rose-50 text-rose-700"
+                : "bg-emerald-50 text-emerald-700"
                 }`}
             >
               {event.status ?? "Success"}
@@ -135,7 +135,7 @@ export default function EventDetailPage() {
             </div>
             <div className="flex flex-col gap-2 text-sm md:flex-row md:items-center md:justify-between">
               <span className="text-zinc-500">Amount</span>
-              <span className="font-mono text-zinc-800">{event.amount ?? "-"}</span>
+              <span className="font-mono text-zinc-800">{(Number(event.amount) / 1000000000000000000).toString() ?? "-"}</span>
             </div>
           </div>
         </div>

@@ -1,23 +1,51 @@
 import { ChainAdapter, DecodedEvent, EVMAdapter, SolanaAdapter } from '@mci/chain-adapters';
 import { EventPublisher } from './publisher';
 import { prisma } from '@mci/database';
-import { CHAIN_IDS } from '@mci/shared';
+import { CHAIN_IDS, createErrorLogger, ErrorLogger } from '@mci/shared';
 
 export class IngestionService {
     private adapters: Map<number, ChainAdapter> = new Map();
     private publisher: EventPublisher;
+    private errorLogger: ErrorLogger;
 
     constructor(redisUrl: string) {
         this.publisher = new EventPublisher(redisUrl);
+        this.errorLogger = createErrorLogger('ingestion-service');
     }
 
     async init() {
-        console.log('Loading chains from database...');
-        const chains = await prisma.chain.findMany({ where: { type: 'EVM' } });
+        try {
+            console.log('Loading chains from database...');
+            const chains = await this.errorLogger.executeWithRetry(
+                async () => await prisma.chain.findMany({ where: { type: 'EVM' } }),
+                'DATABASE_ERROR',
+                { operationType: 'loadChains' }
+            );
 
-        for (const chain of chains) {
-            console.log(`Initializing adapter for chain ${chain.chainId} with RPC: ${chain.rpcUrl}`);
-            this.addAdapter(new EVMAdapter(chain.chainId, chain.rpcUrl));
+            for (const chain of chains) {
+                try {
+                    console.log(`Initializing adapter for chain ${chain.chainId} with RPC: ${chain.rpcUrl}`);
+                    this.addAdapter(new EVMAdapter(chain.chainId, chain.rpcUrl));
+                } catch (error) {
+                    await this.errorLogger.logError(
+                        error,
+                        'PROCESSING_ERROR',
+                        { chainId: chain.chainId, operationType: 'initAdapter' },
+                        'ERROR'
+                    );
+                }
+            }
+            console.log(`✓ Initialized ${chains.length} chain adapters`);
+        } catch (error) {
+            await this.errorLogger.logError(
+                error,
+
+
+                'DATABASE_ERROR',
+                { operationType: 'init' },
+                'CRITICAL'
+            );
+            throw error;
         }
     }
 
@@ -32,7 +60,7 @@ export class IngestionService {
             try {
                 await adapter.connect();
 
-                // Also subscribe to blocks to track height and fetch logs
+                // Subscribe to blocks to track height and fetch logs
                 adapter.subscribeToBlocks(async (blockNum) => {
                     console.log(`[Chain ${chainId}] New Block: ${blockNum}`);
                     try {
@@ -42,40 +70,60 @@ export class IngestionService {
                         if (block.transactions) {
                             console.log(`[Chain ${chainId}] Indexing ${block.transactions.length} transactions from block ${blockNum}`);
                             for (const tx of block.transactions) {
-                                this.handleEvent(tx);
+                                await this.handleEvent(tx, chainId);
                             }
                         }
 
-                        // 2. Index Logs (redundant if transactions above covers them, but currently getLogs might get more info or were the primary source)
-                        // Actually, parseTransaction above already creates DecodedEvent for each tx.
-                        // But native eth txs don't have logIndex.
+                        // 2. Index Logs
                         const logs = await adapter.getLogs(blockNum, blockNum);
                         console.log(`[Chain ${chainId}] Fetched ${logs.length} logs for block ${blockNum}`);
                         for (const log of logs) {
-                            this.handleEvent(log);
+                            await this.handleEvent(log, chainId);
                         }
                     } catch (e) {
-                        console.error(`Error fetching block/logs for block ${blockNum}:`, e);
+                        await this.errorLogger.logError(
+                            e,
+                            'PROCESSING_ERROR',
+                            { chainId, blockNumber: blockNum, operationType: 'processBlock' },
+                            'ERROR'
+                        );
                     }
                 });
 
-                console.log(`Started indexing chain ${chainId}`);
+                console.log(`✓ Started indexing chain ${chainId}`);
             } catch (err) {
-                console.error(`Failed to start chain ${chainId}`, err);
+                await this.errorLogger.logError(
+                    err,
+                    'PROCESSING_ERROR',
+                    { chainId, operationType: 'startChain' },
+                    'CRITICAL'
+                );
             }
         }
+        console.log(`✓ Ingestion service started for ${this.adapters.size} chains`);
     }
 
-    private async handleEvent(event: DecodedEvent) {
+    private async handleEvent(event: DecodedEvent, chainId: number) {
         try {
             // 1. Basic Validation
-            if (!event.tx_hash || !event.address) return;
+            if (!event.tx_hash || !event.address) {
+                return;
+            }
 
             // 2. Publish to Queue
-            await this.publisher.publish(event);
-
+            await this.errorLogger.executeWithRetry(
+                async () => await this.publisher.publish(event),
+                'PROCESSING_ERROR',
+                { chainId, txHash: event.tx_hash, operationType: 'publishEvent' },
+                2
+            );
         } catch (err) {
-            console.error('Error handling event:', err);
+            await this.errorLogger.logError(
+                err,
+                'PROCESSING_ERROR',
+                { chainId, txHash: event.tx_hash, operationType: 'handleEvent' },
+                'WARNING'
+            );
         }
     }
 }

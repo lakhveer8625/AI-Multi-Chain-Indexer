@@ -2,6 +2,7 @@ import { Worker } from 'bullmq';
 import { EventProcessor } from './processors/event-processor';
 import dotenv from 'dotenv';
 import path from 'path';
+import { createErrorLogger } from '@mci/shared';
 
 dotenv.config({ path: path.join(__dirname, '../../../.env') });
 
@@ -9,6 +10,7 @@ const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 
 async function main() {
     const processor = new EventProcessor();
+    const errorLogger = createErrorLogger('indexer-worker');
 
     const url = new URL(REDIS_URL);
 
@@ -28,8 +30,17 @@ async function main() {
         // console.log(`Job ${job.id} completed`);
     });
 
-    worker.on('failed', (job, err) => {
-        console.error(`Job ${job?.id} failed: ${err.message}`);
+    worker.on('failed', async (job, err) => {
+        await errorLogger.logError(
+            err,
+            'PROCESSING_ERROR',
+            {
+                txHash: job?.data?.tx_hash,
+                additionalData: { jobId: job?.id, jobName: job?.name },
+                operationType: 'workerJobFailed'
+            },
+            'ERROR'
+        );
     });
 
     console.log('Indexer Worker Started');

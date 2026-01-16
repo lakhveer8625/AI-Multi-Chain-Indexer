@@ -1,89 +1,178 @@
 import { DecodedEvent } from '@mci/chain-adapters';
 import { prisma, Prisma } from '@mci/database';
 import { Job } from 'bullmq';
+import { createErrorLogger, ErrorLogger } from '@mci/shared';
 
 export class EventProcessor {
+    private errorLogger: ErrorLogger;
+    private blockCache: Set<string> = new Set();
+    private chainCache: Set<number> = new Set();
+    private lastCacheClear: number = Date.now();
+
+    constructor() {
+        this.errorLogger = createErrorLogger('indexer-worker');
+    }
+
+    private async ensureChain(chainId: number) {
+        if (this.chainCache.has(chainId)) return;
+
+        try {
+            await this.errorLogger.executeWithRetry(
+                async () => {
+                    await prisma.chain.upsert({
+                        where: { chainId },
+                        create: {
+                            chainId,
+                            name: `Chain ${chainId}`,
+                            type: 'EVM', // Default to EVM
+                            rpcUrl: 'http://placeholder'
+                        },
+                        update: {}
+                    });
+                },
+                'DATABASE_ERROR',
+                { chainId, operationType: 'ensureChain' },
+                2
+            );
+            this.chainCache.add(chainId);
+        } catch (e) {
+            await this.errorLogger.logError(e, 'DATABASE_ERROR', { chainId, operationType: 'ensureChain' }, 'WARNING');
+        }
+    }
+
+    private checkCache(chainId: number, blockNumber: bigint | number) {
+        // Clear cache every 5 minutes to prevent memory leaks and handle potential reorgs/overwrites if needed
+        if (Date.now() - this.lastCacheClear > 5 * 60 * 1000) {
+            this.blockCache.clear();
+            this.chainCache.clear();
+            this.lastCacheClear = Date.now();
+        }
+        const key = `${chainId}-${blockNumber}`;
+        if (this.blockCache.has(key)) return true;
+        this.blockCache.add(key);
+        return false;
+    }
+
     async process(job: Job<DecodedEvent>) {
         const event = job.data;
 
-        // 1. Check if chain exists (or cache it)
-        // Assuming seeds or init script created chain 1 & 11155111
-        // Safeupsert chain if needed? (Skipping for speed, assuming exists)
-
-        // 2. Ensure Block exists
-        await this.ensureBlock(event);
-
-        // 3. Normalize Event
-        const indexedData = this.normalize(event);
-
-        if (event.gas_used || event.gas_price) {
-            console.log(`[EventProcessor] Gas info for ${event.tx_hash}: used=${event.gas_used}, price=${event.gas_price}`);
-        }
-
-        // 4. Persist to DB
-        // Using transaction to ensure consistency if complex
         try {
-            await prisma.indexedEvent.create({
-                data: {
-                    chain: { connect: { chainId: event.chain_id } },
-                    blockNumber: BigInt(event.block_number),
+            // 0. Ensure Chain exists
+            await this.ensureChain(event.chain_id);
+
+            // 1. Ensure Block exists
+            await this.ensureBlock(event);
+
+            // 2. Normalize Event
+            const indexedData = this.normalize(event);
+
+            if (event.gas_used || event.gas_price) {
+                console.log(`[EventProcessor] Gas info for ${event.tx_hash}: used=${event.gas_used}, price=${event.gas_price}`);
+            }
+
+            // 3. Persist to DB with error handling
+            await this.errorLogger.executeWithRetry(
+                async () => {
+                    await prisma.indexedEvent.create({
+                        data: {
+                            chain: { connect: { chainId: event.chain_id } },
+                            blockNumber: BigInt(event.block_number),
+                            txHash: event.tx_hash,
+                            logIndex: event.log_index,
+                            eventType: indexedData.eventType,
+                            contractAddress: event.address,
+                            from: indexedData.from,
+                            to: indexedData.to,
+                            amount: indexedData.amount,
+                            tokenId: indexedData.tokenId,
+                            metadata: event.payload as any,
+                            timestamp: new Date(),
+                            version: 1,
+                            isCanonical: true,
+                            gasUsed: indexedData.gasUsed,
+                            gasPrice: indexedData.gasPrice,
+                            effectiveGasPrice: indexedData.effectiveGasPrice,
+                            gasLimit: indexedData.gasLimit,
+                            maxFeePerGas: indexedData.maxFeePerGas,
+                            maxPriorityFeePerGas: indexedData.maxPriorityFeePerGas,
+                            input: indexedData.input,
+                            nonce: indexedData.nonce,
+                            transactionIndex: indexedData.transactionIndex,
+                            txType: indexedData.txType
+                        } as any
+                    });
+                },
+                'DATABASE_ERROR',
+                {
+                    chainId: event.chain_id,
+                    blockNumber: event.block_number,
                     txHash: event.tx_hash,
-                    logIndex: event.log_index,
-                    eventType: indexedData.eventType,
-                    contractAddress: event.address,
-                    from: indexedData.from,
-                    to: indexedData.to,
-                    amount: indexedData.amount,
-                    tokenId: indexedData.tokenId,
-                    metadata: event.payload as any,
-                    timestamp: new Date(),
-                    version: 1,
-                    isCanonical: true,
-                    gasUsed: indexedData.gasUsed,
-                    gasPrice: indexedData.gasPrice,
-                    effectiveGasPrice: indexedData.effectiveGasPrice,
-                    gasLimit: indexedData.gasLimit,
-                    maxFeePerGas: indexedData.maxFeePerGas,
-                    maxPriorityFeePerGas: indexedData.maxPriorityFeePerGas,
-                    input: indexedData.input,
-                    nonce: indexedData.nonce,
-                    transactionIndex: indexedData.transactionIndex,
-                    txType: indexedData.txType
-                } as any
-            });
-            // console.log(`Indexed event ${event.tx_hash}-${event.log_index}`);
+                    operationType: 'createIndexedEvent'
+                },
+                2
+            );
         } catch (e: any) {
             if (e.code === 'P2002') {
                 // Unique constraint violation - Idempotent success
-                // console.log('Duplicate event ignored');
                 return;
             }
+            await this.errorLogger.logError(
+                e,
+                'DATABASE_ERROR',
+                {
+                    chainId: event.chain_id,
+                    blockNumber: event.block_number,
+                    txHash: event.tx_hash,
+                    operationType: 'processEvent'
+                },
+                'ERROR'
+            );
             throw e;
         }
     }
 
     private async ensureBlock(event: DecodedEvent) {
-        // Ideally block is ingested before events, or we fetch it here.
-        // For now, we create a placeholder if missing
+        if (this.checkCache(event.chain_id, event.block_number)) return;
+
         try {
-            await prisma.block.upsert({
-                where: {
-                    chainId_number: {
-                        chainId: event.chain_id,
-                        number: BigInt(event.block_number)
-                    }
+            await this.errorLogger.executeWithRetry(
+                async () => {
+                    await prisma.block.upsert({
+                        where: {
+                            chainId_number: {
+                                chainId: event.chain_id,
+                                number: BigInt(event.block_number)
+                            }
+                        },
+                        create: {
+                            chainId: event.chain_id,
+                            number: BigInt(event.block_number),
+                            hash: `0x${BigInt(event.block_number).toString(16).padStart(64, '0')}`, // Unique placeholder
+                            parentHash: '0x' + '0'.repeat(64),
+                            timestamp: new Date()
+                        },
+                        update: {}
+                    });
                 },
-                create: {
+                'DATABASE_ERROR',
+                {
                     chainId: event.chain_id,
-                    number: BigInt(event.block_number),
-                    hash: '0x' + '0'.repeat(64), // Placeholder
-                    parentHash: '0x' + '0'.repeat(64),
-                    timestamp: new Date()
+                    blockNumber: event.block_number,
+                    operationType: 'ensureBlock'
                 },
-                update: {}
-            });
+                2
+            );
         } catch (e) {
-            // Ignore race conditions
+            await this.errorLogger.logError(
+                e,
+                'DATABASE_ERROR',
+                {
+                    chainId: event.chain_id,
+                    blockNumber: event.block_number,
+                    operationType: 'ensureBlock'
+                },
+                'WARNING'
+            );
         }
     }
 

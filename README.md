@@ -2,6 +2,8 @@
 
 A high-performance, scalable blockchain indexer and explorer for multiple EVM-compatible chains. This project provides real-time indexing of blockchain events, transactions, and blocks with a modern web interface for querying and visualizing on-chain data.
 
+📄 **Check out our [Detailed Case Study](./CaseStudy.md) for architecture insights and features.**
+
 ## 🚀 Features
 
 - **Multi-Chain Support**: Index and query data from multiple EVM-compatible chains (Ethereum, Sepolia, Polygon, etc.)

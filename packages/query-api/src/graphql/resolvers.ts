@@ -275,6 +275,75 @@ export const resolvers: any = {
                 medianGasPrice,
                 tps: tps > 0 ? tps : 0.01
             };
+        },
+        errorLogs: async (_: any, args: { limit?: number; offset?: number; severity?: string; errorType?: string; isResolved?: boolean }) => {
+            const { limit = 50, offset = 0, severity, errorType, isResolved } = args;
+            const where: Prisma.ErrorLogWhereInput = {};
+
+            if (severity) {
+                where.severity = severity;
+            }
+            if (errorType) {
+                where.errorType = errorType;
+            }
+            if (typeof isResolved === 'boolean') {
+                where.isResolved = isResolved;
+            }
+
+            const logs = await prisma.errorLog.findMany({
+                take: limit,
+                skip: offset,
+                where,
+                orderBy: { createdAt: 'desc' }
+            });
+
+            return logs.map((log: any) => ({
+                ...log,
+                id: log.id.toString(),
+                context: log.context ? JSON.stringify(log.context) : null,
+                createdAt: log.createdAt.toISOString(),
+                resolvedAt: log.resolvedAt ? log.resolvedAt.toISOString() : null
+            }));
+        },
+        errorStats: async (_: any, args: { hours?: number }) => {
+            const hours = args.hours || 24;
+            const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+
+            const errors = await prisma.errorLog.findMany({
+                where: { createdAt: { gte: since } }
+            });
+
+            const byType: Record<string, number> = {};
+            const bySeverity: Record<string, number> = {};
+            let criticalCount = 0;
+
+            errors.forEach((error: any) => {
+                byType[error.errorType] = (byType[error.errorType] || 0) + 1;
+                bySeverity[error.severity] = (bySeverity[error.severity] || 0) + 1;
+                if (error.severity === 'CRITICAL') {
+                    criticalCount++;
+                }
+            });
+
+            const recentErrors = await prisma.errorLog.findMany({
+                take: 10,
+                where: { createdAt: { gte: since } },
+                orderBy: { createdAt: 'desc' }
+            });
+
+            return {
+                total: errors.length,
+                byType: JSON.stringify(byType),
+                bySeverity: JSON.stringify(bySeverity),
+                criticalCount,
+                recentErrors: recentErrors.map((log: any) => ({
+                    ...log,
+                    id: log.id.toString(),
+                    context: log.context ? JSON.stringify(log.context) : null,
+                    createdAt: log.createdAt.toISOString(),
+                    resolvedAt: log.resolvedAt ? log.resolvedAt.toISOString() : null
+                }))
+            };
         }
     }
 };

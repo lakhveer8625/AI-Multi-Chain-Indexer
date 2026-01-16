@@ -67,6 +67,29 @@ export const typeDefs = `#graphql
     count: Int!
   }
 
+  type ErrorLog {
+    id: ID!
+    chainId: Int
+    errorType: String!
+    errorSource: String!
+    errorMessage: String!
+    stackTrace: String
+    context: String
+    severity: String!
+    isResolved: Boolean!
+    retryCount: Int!
+    createdAt: String!
+    resolvedAt: String
+  }
+
+  type ErrorStats {
+    total: Int!
+    byType: String!
+    bySeverity: String!
+    criticalCount: Int!
+    recentErrors: [ErrorLog!]!
+  }
+
   type Query {
     events(limit: Int, offset: Int, chainId: Int, type: String, status: String, search: String): [Event!]!
     eventsPage(limit: Int, offset: Int, chainId: Int, type: String, status: String, search: String): EventPage!
@@ -76,5 +99,7 @@ export const typeDefs = `#graphql
     transactionHistory(days: Int, chainId: Int): [TransactionHistory!]!
     networkStats(chainId: Int!): NetworkStats
     chains: [Chain!]!
+    errorLogs(limit: Int, offset: Int, severity: String, errorType: String, isResolved: Boolean): [ErrorLog!]!
+    errorStats(hours: Int): ErrorStats!
   }
 `;
